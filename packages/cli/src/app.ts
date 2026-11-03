@@ -64,8 +64,7 @@ import { trialRoute } from "./commands/trial/index.js";
 import { listCommand as trialListCommand } from "./commands/trial/list.js";
 import { wasmSplitCommand } from "./commands/wasm-split.js";
 import { buildSentryApp, buildSentryRoutes } from "./app-root.js";
-import { setGraphicsBanner } from "./lib/help.js";
-import { graphicsBanner, graphicsBannerExtraRows } from "./lib/sixel.js";
+import { registerGraphicsBanner } from "./graphics-banner.js";
 
 /** Top-level route map containing all CLI commands */
 export const routes = buildSentryRoutes({
@@ -140,10 +139,4 @@ export const routes = buildSentryRoutes({
 
 export const app = buildSentryApp(routes);
 
-// Help shows the kitty/sixel image banner on capable terminals. Registered
-// here rather than imported by `lib/help.ts`, so applications without it
-// (`@sentry/mcp-server`) leave the image code out of their bundle.
-setGraphicsBanner({
-  render: graphicsBanner,
-  extraRows: graphicsBannerExtraRows,
-});
+registerGraphicsBanner();

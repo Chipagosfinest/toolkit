@@ -39,7 +39,7 @@ import {
 import { error as errorColor, warning } from "./formatters/colors.js";
 import { stripAnsi } from "./formatters/plain-detect.js";
 import { buildTopLevelFlags } from "./global-flags.js";
-import { renderJsonHelp } from "./help.js";
+import { renderJsonHelp, renderRootUsage } from "./help.js";
 import { isRouteMap, type RouteMap } from "./introspect.js";
 import { type CliRoutes, setRoutes } from "./route-registry.js";
 
@@ -342,9 +342,15 @@ export function buildCliApplication(
       // --json` as structured JSON through the same introspection path as
       // `sentry help --json`, instead of Stricli's text usage. Returns undefined
       // for non-JSON help so the built-in text output is unchanged. This replaces
-      // the old argv `--help --json` → `help` command rewrite.
-      renderHelp: ({ prefix, unprocessedInputs }) =>
-        renderJsonHelp(prefix, unprocessedInputs),
+      // the old argv `--help --json` → `help` command rewrite. Plain `--help`
+      // at the top level prints the precomputed copy of that text when one is
+      // registered (`setRootHelp`), since an application built without every
+      // route can't render it.
+      renderHelp: ({ prefix, unprocessedInputs, helpRequested, ansiColor }) =>
+        renderJsonHelp(prefix, unprocessedInputs) ??
+        (helpRequested === true
+          ? renderRootUsage(prefix, ansiColor)
+          : undefined),
     },
     localization: {
       loadText: () => text,

@@ -118,11 +118,15 @@ Top-level layout:
   names a top-level route, it loads only that route through
   `src/generated/route-loaders.ts`, which `script/generate-route-loaders.ts`
   writes from the route map and imports in `app.ts` (`generate:routes`, part of
-  `generate:docs`). A bare `--version` loads only `help`. Anything else, and
-  `help`, `schema`, and `cli`, which read the whole tree with `getRoutes()`,
-  loads `app.ts`. Add commands to `app.ts`
-  only; a new top-level command that reads the whole tree goes in
-  `FULL_TREE_ROUTES`. Root route map settings live in `src/app-root.ts`.
+  `generate:docs`). A bare `--version` loads only `help`. So does the text
+  top-level help (`sentry`, `sentry help`, `sentry --help`), which prints the
+  copy in `src/generated/root-help.json` that `script/generate-root-help.ts`
+  renders from the full tree (`generate:root-help`, part of `generate:docs`);
+  `src/lib/help.ts` reads it through `setRootHelp()`. Anything else, including
+  JSON help and `help`, `schema`, and `cli`, which read the whole tree with
+  `getRoutes()`, loads `app.ts`. Add commands to `app.ts` only; a new top-level
+  command that reads the whole tree goes in `FULL_TREE_ROUTES`. Root route map
+  settings live in `src/app-root.ts`.
 - **`src/sea-main.ts`** — main script of the standalone binary. `script/build.ts`
   embeds the CLI (`src/bin.ts`) and the completion engine (`src/complete-bin.ts`)
   as separate SEA assets, and this bootstrap runs one of them through
@@ -252,8 +256,8 @@ with `getRoutes()` from `src/lib/route-registry.ts`, never by importing
 import would pull every command into any bundle built from one of them.
 `app.ts` registers its map with `setRoutes()`; a test that needs the real tree
 imports `src/app.js`. A run whose first argument after global flags names a
-top-level route
-registers a map with only that route (see `src/app-for-args.ts`), so code that
+top-level route registers a map with only that route, and the text top-level
+help one with only `help` (see `src/app-for-args.ts`), so code that
 needs routes other than the running one's must run under a `FULL_TREE_ROUTES`
 command. `test/lib/route-registry.test.ts` fails when a module in
 `src/lib/` reaches `app.ts`; the only exception is `sdk-invoke.ts`, the
@@ -752,7 +756,7 @@ Use `"date"` for timestamp-based sort (not `"time"`). Export sort types from the
 
 ### Generated Docs & Skills
 
-All command docs and skill files are generated via `pnpm run generate:docs` (which runs `generate:banner`, `generate:completions`, `generate:command-docs`, `generate:skill`, then `generate:docs-sections`). This runs automatically as part of `dev`, `build`, `typecheck`, and `test` scripts.
+All command docs and skill files are generated via `pnpm run generate:docs` (which runs `generate:banner`, `generate:completions`, `generate:root-help`, `generate:command-docs`, `generate:skill`, then `generate:docs-sections`). This runs automatically as part of `dev`, `build`, `typecheck`, and `test` scripts.
 
 - **Command docs** (`apps/cli-docs/src/content/docs/commands/*.md`) and the configuration page (`apps/cli-docs/src/content/docs/configuration.md`) are **gitignored** and generated from CLI metadata + hand-written fragments in `apps/cli-docs/src/fragments/` (paths live in `script/paths.ts`).
 - **Skill files** (`plugins/sentry-cli/skills/sentry-cli/`) are **committed** (consumed by external plugin systems) and auto-committed by CI when stale.

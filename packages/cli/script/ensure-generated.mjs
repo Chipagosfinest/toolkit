@@ -37,6 +37,7 @@ const DOCS_OUTPUTS = [
   "src/generated/skill-content.ts",
   "src/generated/completion-targets.json",
   "src/generated/route-loaders.ts",
+  "src/generated/root-help.json",
 ];
 
 function run(script) {

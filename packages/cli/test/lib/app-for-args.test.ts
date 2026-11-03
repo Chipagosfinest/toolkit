@@ -1,7 +1,17 @@
-import { describe, expect, test } from "vitest";
-import { loadAppForArgs, routesForArgs } from "../../src/app-for-args.js";
-import { routes } from "../../src/app.js";
+import { afterEach, describe, expect, test } from "vitest";
+import { loadAppForArgs, selectApp } from "../../src/app-for-args.js";
+import { app, routes } from "../../src/app.js";
+import rootHelp from "../../src/generated/root-help.json";
 import { ROUTE_LOADERS } from "../../src/generated/route-loaders.js";
+import { withEnv } from "../../src/lib/env.js";
+import {
+  printCustomHelp,
+  renderRootUsage,
+  setRootHelp,
+} from "../../src/lib/help.js";
+import { setRoutes } from "../../src/lib/route-registry.js";
+import { buildRootHelp, renderUsage } from "../../script/lib/root-help.js";
+import { envWithoutAgent, useTestConfigDir } from "../helpers.js";
 
 describe("ROUTE_LOADERS", () => {
   test("loads every top-level route of app.ts, in its order", async () => {
@@ -15,7 +25,9 @@ describe("ROUTE_LOADERS", () => {
   });
 });
 
-describe("routesForArgs", () => {
+describe("selectApp", () => {
+  const env = {};
+
   test.each([
     [
       ["issue", "list"],
@@ -51,28 +63,104 @@ describe("routesForArgs", () => {
     // `--version` prints the version before any command runs
     [["--version"], ["help"]],
     [["--verbose", "--version"], ["help"]],
+    [["--version", "--help"], ["help"]],
   ])("%j loads %j", (args, expected) => {
-    expect(routesForArgs(args)).toEqual(expected);
+    expect(selectApp(args, env)).toEqual({ routes: expected, rootHelp: false });
   });
 
   test.each([
     [[]],
-    [["--help"]],
-    [["--version", "--help"]],
     [["--verbose"]],
+    [["--help"]],
+    [["-h"]],
+    [["--log-level", "debug", "--help"]],
+    [["help"]],
+    [["help", "--verbose"]],
+    // The help command's own help
+    [["help", "--help"]],
+  ])("%j prints the precomputed top-level help", (args) => {
+    expect(selectApp(args, env)).toEqual({ routes: ["help"], rootHelp: true });
+  });
+
+  test.each([
     [["--json"]],
+    [["--help", "--json"]],
+    [["--fields", "name"]],
+    [["help", "--json"]],
+    [["help", "--fields=name"]],
+    // `--help` before a route name
+    [["--help", "issue"]],
     // Flags the route scanner doesn't accept before the route name
     [["--unknown", "issue", "list"]],
+    [["--helpAll"]],
     [["--", "issue"]],
     // An unknown name needs every route for the suggestions
     [["isue", "list"]],
     [["__proto__"]],
     // These read the whole command tree
     [["help", "issue"]],
+    [["help", "--log-level", "debug"]],
     [["schema"]],
     [["cli", "setup"]],
   ])("%j loads the full application", (args) => {
-    expect(routesForArgs(args)).toBeUndefined();
+    expect(selectApp(args, env)).toBeUndefined();
+  });
+
+  test("JSON output from the environment loads the full application", () => {
+    expect(selectApp([], { SENTRY_OUTPUT_FORMAT: "json" })).toBeUndefined();
+    expect(
+      selectApp(["help"], { SENTRY_OUTPUT_FORMAT: "json" }),
+    ).toBeUndefined();
+  });
+});
+
+describe("root-help.json", () => {
+  test("matches the help of the full application", async () => {
+    expect(rootHelp).toEqual(await buildRootHelp(app, routes));
+  });
+});
+
+describe("top-level help from the precomputed copy", () => {
+  useTestConfigDir("app-for-args-test-");
+
+  afterEach(() => {
+    setRootHelp(undefined);
+    setRoutes(routes);
+  });
+
+  /** Render `render` with the full routes, then with only `help` loaded. */
+  async function renderBoth(render: () => string | undefined) {
+    setRoutes(routes);
+    const full = render();
+    const loaded = await loadAppForArgs(["help"]);
+    expect(
+      loaded.routes.getAllEntries().map((entry) => entry.name.original),
+    ).toEqual(["help"]);
+    return { full, precomputed: render() };
+  }
+
+  test.each([{ overview: true }, { overview: false }])(
+    "printCustomHelp(%j) prints the same commands",
+    async (options) => {
+      const { full, precomputed } = await withEnv(envWithoutAgent(), () =>
+        renderBoth(() => printCustomHelp(options)),
+      );
+      expect(precomputed).toBe(full);
+    },
+  );
+
+  test.each([false, true])(
+    "`--help` prints the full application's text (ansiColor: %s)",
+    async (ansiColor) => {
+      const full = await renderUsage(app, ansiColor);
+      const loaded = await loadAppForArgs(["--help"]);
+      expect(await renderUsage(loaded.app, ansiColor)).toBe(full);
+    },
+  );
+
+  test("is only for the top level", async () => {
+    await loadAppForArgs(["help"]);
+    expect(renderRootUsage(["sentry", "help"], false)).toBeUndefined();
   });
 });
 
@@ -103,6 +191,6 @@ describe("loadAppForArgs", () => {
   });
 
   test("loads app.ts for the full application", async () => {
-    expect((await loadAppForArgs(["--help"])).routes).toBe(routes);
+    expect((await loadAppForArgs(["--help", "--json"])).routes).toBe(routes);
   });
 });

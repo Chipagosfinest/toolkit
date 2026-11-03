@@ -3,7 +3,9 @@
  *
  * Provides a branded, styled help output for the CLI.
  * Shows custom formatting when running `sentry` with no arguments.
- * Commands are auto-generated from Stricli's route structure.
+ * Commands are auto-generated from Stricli's route structure, or from the
+ * copy `script/generate-root-help.ts` writes at build time (see
+ * {@link setRootHelp}).
  */
 
 import { asRunningAppCommand } from "./app-identity.js";
@@ -109,64 +111,126 @@ const MAX_OVERVIEW_SUBCOMMANDS = 5;
 /** Fewest commands the overview shows, even on very short terminals. */
 const MIN_OVERVIEW_COMMANDS = 3;
 
-/** Visible top-level route entries, in registration order. */
-function visibleRouteEntries(): RouteMapEntry[] {
-  // Cast to our introspection types — Stricli's generic types are compatible
-  const routeMap = getRoutes() as unknown as RouteMap;
+/** A visible top-level command, as the branded help lists it. */
+export type RootCommandSummary = {
+  readonly name: string;
+  readonly brief: string;
+  /** The visible subcommands of a route group. */
+  readonly subcommands?: readonly string[];
+  /** What follows the name of a command in its usage, like `<endpoint>`. */
+  readonly placeholder?: string;
+};
+
+/**
+ * Summarize the visible top-level entries of `routeMap`, in registration
+ * order, for the branded help.
+ */
+export function summarizeRootCommands(
+  routeMap: RouteMap,
+): RootCommandSummary[] {
   return routeMap
     .getAllEntries()
-    .filter((entry: RouteMapEntry) => !entry.hidden);
+    .filter((entry: RouteMapEntry) => !entry.hidden)
+    .map((entry: RouteMapEntry): RootCommandSummary => {
+      const { target } = entry;
+      const summary = { name: entry.name.original, brief: target.brief };
+      if (isRouteMap(target)) {
+        const subcommands = target
+          .getAllEntries()
+          .filter((sub: RouteMapEntry) => !sub.hidden)
+          .map((sub: RouteMapEntry) => sub.name.original);
+        return { ...summary, subcommands };
+      }
+      // A direct command: any public syntax override before raw parameters
+      if (isCommand(target)) {
+        const placeholder =
+          target.__primaryUsage ??
+          getPositionalString(target.parameters.positional);
+        return placeholder ? { ...summary, placeholder } : summary;
+      }
+      return summary;
+    });
 }
 
 /**
- * Build the help line for a top-level route entry.
+ * Help for the top-level of the CLI, precomputed so `sentry`, `sentry help`,
+ * and `sentry --help` can print it without loading every command.
+ * `script/generate-root-help.ts` writes it.
+ */
+export type RootHelp = {
+  /** The program name the help was rendered for. */
+  readonly name: string;
+  /** What {@link summarizeRootCommands} returns for the full route map. */
+  readonly commands: readonly RootCommandSummary[];
+  /** Stricli's `--help` text for the top level, without and with colors. */
+  readonly usage: { readonly plain: string; readonly color: string };
+};
+
+let rootHelp: RootHelp | undefined;
+
+/**
+ * Register precomputed top-level help, for an application built without
+ * every route. Without it, the help reads the registered route map.
+ */
+export function setRootHelp(help: RootHelp | undefined): void {
+  rootHelp = help;
+}
+
+/** The visible top-level commands, from {@link setRootHelp} or the routes. */
+function rootCommands(): readonly RootCommandSummary[] {
+  if (rootHelp) {
+    return rootHelp.commands;
+  }
+  // Cast to our introspection types — Stricli's generic types are compatible
+  return summarizeRootCommands(getRoutes() as unknown as RouteMap);
+}
+
+/**
+ * The precomputed Stricli `--help` text for the top level, when
+ * {@link setRootHelp} registered one for the running program and `prefix`
+ * is the top level.
+ */
+export function renderRootUsage(
+  prefix: readonly string[],
+  ansiColor: boolean,
+): string | undefined {
+  if (!(rootHelp && prefix.length === 1 && prefix[0] === rootHelp.name)) {
+    return;
+  }
+  return ansiColor ? rootHelp.usage.color : rootHelp.usage.plain;
+}
+
+/**
+ * Build the help line for a top-level command.
  *
- * @param entry - Top-level route entry
+ * @param command - Top-level command summary
  * @param pickSubcommands - Selects which visible subcommand names to list
  */
 function toHelpCommand(
-  entry: RouteMapEntry,
-  pickSubcommands: (routeName: string, names: string[]) => string[],
+  command: RootCommandSummary,
+  pickSubcommands: (
+    routeName: string,
+    names: readonly string[],
+  ) => readonly string[],
 ): HelpCommand {
-  const routeName = entry.name.original;
-  const brief = entry.target.brief;
-
-  if (isRouteMap(entry.target)) {
-    const subNames = entry.target
-      .getAllEntries()
-      .filter((sub: RouteMapEntry) => !sub.hidden)
-      .map((sub: RouteMapEntry) => sub.name.original);
+  const { name, brief, subcommands, placeholder } = command;
+  if (subcommands) {
     return {
-      usage: `sentry ${routeName} ${pickSubcommands(routeName, subNames).join(" | ")}`,
+      usage: `sentry ${name} ${pickSubcommands(name, subcommands).join(" | ")}`,
       description: brief,
     };
   }
-
-  // Direct command - use any public syntax override before raw parameters
-  if (isCommand(entry.target)) {
-    const placeholder =
-      entry.target.__primaryUsage ??
-      getPositionalString(entry.target.parameters.positional);
-    const usageSuffix = placeholder ? ` ${placeholder}` : "";
-    return {
-      usage: `sentry ${routeName}${usageSuffix}`,
-      description: brief,
-    };
-  }
-
-  return {
-    usage: `sentry ${routeName}`,
-    description: brief,
-  };
+  const usageSuffix = placeholder ? ` ${placeholder}` : "";
+  return { usage: `sentry ${name}${usageSuffix}`, description: brief };
 }
 
 /**
- * Generate the full commands list dynamically from Stricli's route structure.
- * This ensures help text stays in sync with actual registered commands.
+ * Generate the full commands list from the route structure, so help text
+ * stays in sync with the registered commands.
  */
 function generateCommands(): HelpCommand[] {
-  return visibleRouteEntries().map((entry) =>
-    toHelpCommand(entry, (_routeName, names) => names),
+  return rootCommands().map((command) =>
+    toHelpCommand(command, (_routeName, names) => names),
   );
 }
 
@@ -175,17 +239,17 @@ function generateCommands(): HelpCommand[] {
  * first, each listing at most {@link MAX_OVERVIEW_SUBCOMMANDS} subcommands.
  */
 function generateOverviewCommands(loggedIn: boolean): HelpCommand[] {
-  const entries = visibleRouteEntries();
+  const commands = rootCommands();
   const names: readonly string[] = loggedIn
     ? [...OVERVIEW_COMMANDS.filter((name) => name !== "auth"), "auth"]
     : OVERVIEW_COMMANDS;
   return names.flatMap((name) => {
-    const entry = entries.find((e) => e.name.original === name);
-    if (!entry) {
+    const command = commands.find((c) => c.name === name);
+    if (!command) {
       return [];
     }
     return [
-      toHelpCommand(entry, (routeName, subNames) => {
+      toHelpCommand(command, (routeName, subNames) => {
         const preferred = OVERVIEW_SUBCOMMANDS[routeName];
         const picked = preferred
           ? preferred.filter((sub) => subNames.includes(sub))
@@ -285,7 +349,8 @@ function formatEnvVars(): string {
 /**
  * Renders the help banner as a terminal image (kitty or sixel).
  *
- * The full CLI registers one from `app.ts` with {@link setGraphicsBanner}.
+ * The CLI registers one through `src/graphics-banner.ts` with
+ * {@link setGraphicsBanner}.
  * Applications that don't, such as `@sentry/mcp-server`, show the block-art
  * banner instead and leave the image code (`sixel.ts`, `pngjs`, `jpeg-js`)
  * out of their bundle.
